@@ -40,6 +40,8 @@ Streamable HTTP configuration:
 | `MCP_HOST` | `127.0.0.1` | Host interface for HTTP mode |
 | `MCP_PORT` | `8000` | Port for HTTP mode |
 | `MCP_PATH` | `/mcp` | MCP Streamable HTTP endpoint path |
+| `MCP_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*` | Comma-separated Host header allowlist |
+| `MCP_ALLOWED_ORIGINS` | `http://127.0.0.1:*,http://localhost:*` | Comma-separated Origin header allowlist |
 
 The server does not bind to `0.0.0.0` by default. For production, put HTTPS/authentication in front of the local HTTP listener.
 
@@ -81,6 +83,18 @@ http://127.0.0.1:8000/mcp
 ```
 
 The endpoint is intended to be proxied by HTTPS infrastructure later. Do not commit credentials or expose the Wiki.js API key to clients.
+
+When deploying behind a reverse proxy with a public hostname, explicitly allow that hostname and its browser origin:
+
+```text
+MCP_HOST=127.0.0.1
+MCP_PORT=8000
+MCP_PATH=/mcp
+MCP_ALLOWED_HOSTS=127.0.0.1:*,localhost:*,mcp.example.com
+MCP_ALLOWED_ORIGINS=http://127.0.0.1:*,http://localhost:*,https://mcp.example.com
+```
+
+The MCP Python SDK enforces DNS rebinding protection for HTTP transports. Keep that protection enabled. Do not use `*`, disable DNS rebinding protection, or spoof the `Host` header in nginx merely to bypass validation.
 
 ### Read-only mode
 

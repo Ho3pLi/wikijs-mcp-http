@@ -158,6 +158,8 @@ def clean_env():
         "MCP_HOST",
         "MCP_PORT",
         "MCP_PATH",
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_ORIGINS",
         "DEBUG",
     ]
 

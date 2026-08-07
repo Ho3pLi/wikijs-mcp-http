@@ -7,6 +7,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import WikiJSClient
 from .config import WikiJSConfig
@@ -48,6 +49,11 @@ class WikiJSMCPServer:
             streamable_http_path=self.config.mcp_path,
             stateless_http=True,
             json_response=True,
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=self.config.mcp_allowed_hosts,
+                allowed_origins=self.config.mcp_allowed_origins,
+            ),
             instructions=(
                 "Wiki.js MCP server — workflow guidance:\n"
                 "- Start by calling wiki_list_pages or wiki_get_tree to orient yourself.\n"

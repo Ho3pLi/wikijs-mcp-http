@@ -5,7 +5,11 @@ from unittest.mock import patch
 
 import pytest
 
-from wikijs_mcp.config import WikiJSConfig
+from wikijs_mcp.config import (
+    DEFAULT_MCP_ALLOWED_HOSTS,
+    DEFAULT_MCP_ALLOWED_ORIGINS,
+    WikiJSConfig,
+)
 
 
 @pytest.mark.unit
@@ -24,6 +28,8 @@ class TestWikiJSConfig:
         assert config.mcp_host == "127.0.0.1"
         assert config.mcp_port == 8000
         assert config.mcp_path == "/mcp"
+        assert config.mcp_allowed_hosts == DEFAULT_MCP_ALLOWED_HOSTS
+        assert config.mcp_allowed_origins == DEFAULT_MCP_ALLOWED_ORIGINS
 
     def test_init_with_values(self):
         """Test WikiJSConfig initialization with specific values."""
@@ -36,6 +42,12 @@ class TestWikiJSConfig:
             mcp_host="localhost",
             mcp_port=9000,
             mcp_path="/wiki-mcp",
+            mcp_allowed_hosts=["127.0.0.1:*", "localhost:*", "mcp.example.com"],
+            mcp_allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "https://mcp.example.com",
+            ],
         )
 
         assert config.url == "https://test-wiki.com"
@@ -46,6 +58,16 @@ class TestWikiJSConfig:
         assert config.mcp_host == "localhost"
         assert config.mcp_port == 9000
         assert config.mcp_path == "/wiki-mcp"
+        assert config.mcp_allowed_hosts == [
+            "127.0.0.1:*",
+            "localhost:*",
+            "mcp.example.com",
+        ]
+        assert config.mcp_allowed_origins == [
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "https://mcp.example.com",
+        ]
 
     def test_graphql_url_property(self):
         """Test graphql_url property construction."""
@@ -105,6 +127,8 @@ class TestWikiJSConfig:
             "MCP_HOST": "localhost",
             "MCP_PORT": "9000",
             "MCP_PATH": "/wiki-mcp",
+            "MCP_ALLOWED_HOSTS": "127.0.0.1:*, localhost:*, mcp.example.com",
+            "MCP_ALLOWED_ORIGINS": "http://127.0.0.1:*, http://localhost:*, https://mcp.example.com",
             "DEBUG": "true",
         }
 
@@ -119,6 +143,16 @@ class TestWikiJSConfig:
         assert config.mcp_host == "localhost"
         assert config.mcp_port == 9000
         assert config.mcp_path == "/wiki-mcp"
+        assert config.mcp_allowed_hosts == [
+            "127.0.0.1:*",
+            "localhost:*",
+            "mcp.example.com",
+        ]
+        assert config.mcp_allowed_origins == [
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "https://mcp.example.com",
+        ]
 
     def test_load_config_with_defaults(self):
         """Test that load_config uses defaults for missing env vars."""
@@ -135,6 +169,38 @@ class TestWikiJSConfig:
         assert config.mcp_host == "127.0.0.1"
         assert config.mcp_port == 8000
         assert config.mcp_path == "/mcp"
+        assert config.mcp_allowed_hosts == DEFAULT_MCP_ALLOWED_HOSTS
+        assert config.mcp_allowed_origins == DEFAULT_MCP_ALLOWED_ORIGINS
+
+    def test_allowed_hosts_empty_entries_are_ignored(self):
+        """Test allowed host parsing ignores whitespace-only entries."""
+        env_vars = {
+            "MCP_ALLOWED_HOSTS": " 127.0.0.1:* , , localhost:* ,, mcp.example.com ",
+        }
+
+        with patch.dict(os.environ, env_vars):
+            config = WikiJSConfig.load_config()
+
+        assert config.mcp_allowed_hosts == [
+            "127.0.0.1:*",
+            "localhost:*",
+            "mcp.example.com",
+        ]
+
+    def test_allowed_origins_empty_entries_are_ignored(self):
+        """Test allowed origin parsing ignores whitespace-only entries."""
+        env_vars = {
+            "MCP_ALLOWED_ORIGINS": " http://127.0.0.1:* , , http://localhost:* ,, https://mcp.example.com ",
+        }
+
+        with patch.dict(os.environ, env_vars):
+            config = WikiJSConfig.load_config()
+
+        assert config.mcp_allowed_origins == [
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "https://mcp.example.com",
+        ]
 
     @pytest.mark.parametrize(
         "debug_value,expected",
