@@ -5,6 +5,13 @@ import os
 from pydantic import BaseModel, Field
 
 
+def parse_bool(value: str | None, default: bool = False) -> bool:
+    """Parse common environment-style boolean values."""
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class WikiJSConfig(BaseModel):
     """Configuration for Wiki.js connection."""
 
@@ -12,6 +19,10 @@ class WikiJSConfig(BaseModel):
     api_key: str = Field(default="")
     graphql_endpoint: str = Field(default="/graphql")
     debug: bool = Field(default=False)
+    read_only: bool = Field(default=False)
+    mcp_host: str = Field(default="127.0.0.1")
+    mcp_port: int = Field(default=8000)
+    mcp_path: str = Field(default="/mcp")
 
     @classmethod
     def load_config(cls) -> "WikiJSConfig":
@@ -20,7 +31,11 @@ class WikiJSConfig(BaseModel):
             url=os.getenv("WIKIJS_URL", ""),
             api_key=os.getenv("WIKIJS_API_KEY", ""),
             graphql_endpoint=os.getenv("WIKIJS_GRAPHQL_ENDPOINT", "/graphql"),
-            debug=os.getenv("DEBUG", "false").lower() == "true",
+            debug=parse_bool(os.getenv("DEBUG")),
+            read_only=parse_bool(os.getenv("WIKIJS_READ_ONLY")),
+            mcp_host=os.getenv("MCP_HOST", "127.0.0.1"),
+            mcp_port=int(os.getenv("MCP_PORT", "8000")),
+            mcp_path=os.getenv("MCP_PATH", "/mcp"),
         )
 
     @property
