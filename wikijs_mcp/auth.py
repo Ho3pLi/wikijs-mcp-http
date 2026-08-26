@@ -107,10 +107,10 @@ class WikiJSCredentialResolver:
 
     @staticmethod
     def _extract_email(claims: dict[str, Any]) -> str:
-        for claim_name in ("email"):
-            value = claims.get(claim_name)
-            if isinstance(value, str) and value.strip():
-                return value
+        value = claims.get("email")
+        if isinstance(value, str) and value.strip():
+            return value
+    
         raise AuthorizationError(
             "Cloudflare Access assertion does not contain an email identity."
         )
