@@ -106,12 +106,19 @@ class WikiJSCredentialResolver:
 
         fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12]
 
-        logger.warning(
-            "Resolved Wiki.js credentials: email=%s profile=%s key_env=%s key_fingerprint=%s",
-            normalize_email(email),
-            profile,
-            api_key_env,
-            fingerprint,
+        # logger.warning(
+        #     "Resolved Wiki.js credentials: email=%s profile=%s key_env=%s key_fingerprint=%s",
+        #     normalize_email(email),
+        #     profile,
+        #     api_key_env,
+        #     fingerprint,
+        # )
+        print(
+            f"AUTH DEBUG email={normalize_email(email)} "
+            f"profile={profile} "
+            f"key_env={api_key_env} "
+            f"fingerprint={fingerprint}",
+            flush=True,
         )
 
         return api_key
