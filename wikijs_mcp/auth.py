@@ -107,7 +107,7 @@ class WikiJSCredentialResolver:
 
     @staticmethod
     def _extract_email(claims: dict[str, Any]) -> str:
-        for claim_name in ("email", "common_name"):
+        for claim_name in ("email"):
             value = claims.get(claim_name)
             if isinstance(value, str) and value.strip():
                 return value
