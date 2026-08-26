@@ -9,6 +9,7 @@ from wikijs_mcp.config import (
     DEFAULT_MCP_ALLOWED_HOSTS,
     DEFAULT_MCP_ALLOWED_ORIGINS,
     WikiJSConfig,
+    parse_mapping,
 )
 
 
@@ -30,6 +31,7 @@ class TestWikiJSConfig:
         assert config.mcp_path == "/mcp"
         assert config.mcp_allowed_hosts == DEFAULT_MCP_ALLOWED_HOSTS
         assert config.mcp_allowed_origins == DEFAULT_MCP_ALLOWED_ORIGINS
+        assert config.multi_user_auth_enabled is False
 
     def test_init_with_values(self):
         """Test WikiJSConfig initialization with specific values."""
@@ -129,6 +131,11 @@ class TestWikiJSConfig:
             "MCP_PATH": "/wiki-mcp",
             "MCP_ALLOWED_HOSTS": "127.0.0.1:*, localhost:*, mcp.example.com",
             "MCP_ALLOWED_ORIGINS": "http://127.0.0.1:*, http://localhost:*, https://mcp.example.com",
+            "WIKIJS_CF_ACCESS_ISSUER": "https://team.cloudflareaccess.com",
+            "WIKIJS_CF_ACCESS_AUDIENCE": "audience-tag",
+            "WIKIJS_CF_ACCESS_JWKS_URL": "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+            "WIKIJS_AUTH_USERS": "Admin@Example.com=admin,friend@example.com=friends",
+            "WIKIJS_AUTH_PROFILES": "admin=WIKIJS_API_KEY_ADMIN,friends=WIKIJS_API_KEY_FRIENDS",
             "DEBUG": "true",
         }
 
@@ -153,6 +160,50 @@ class TestWikiJSConfig:
             "http://localhost:*",
             "https://mcp.example.com",
         ]
+        assert config.cloudflare_access_issuer == "https://team.cloudflareaccess.com"
+        assert config.cloudflare_access_audience == "audience-tag"
+        assert config.cloudflare_access_jwks_url == (
+            "https://team.cloudflareaccess.com/cdn-cgi/access/certs"
+        )
+        assert config.auth_users == {
+            "admin@example.com": "admin",
+            "friend@example.com": "friends",
+        }
+        assert config.auth_profiles == {
+            "admin": "WIKIJS_API_KEY_ADMIN",
+            "friends": "WIKIJS_API_KEY_FRIENDS",
+        }
+        assert config.multi_user_auth_enabled is True
+
+    def test_parse_mapping_accepts_json(self):
+        mapping = parse_mapping(
+            '{"User@Example.com": "admin", "friend@example.com": "friends"}',
+            normalize_keys=True,
+        )
+
+        assert mapping == {
+            "user@example.com": "admin",
+            "friend@example.com": "friends",
+        }
+
+    def test_validate_multi_user_auth_config_missing_values(self):
+        config = WikiJSConfig(url="https://test.com", auth_users={"u@example.com": "p"})
+
+        with pytest.raises(ValueError, match="WIKIJS_CF_ACCESS_ISSUER"):
+            config.validate_multi_user_auth_config()
+
+    def test_validate_multi_user_auth_config_undefined_profile(self):
+        config = WikiJSConfig(
+            url="https://test.com",
+            cloudflare_access_issuer="https://team.cloudflareaccess.com",
+            cloudflare_access_audience="aud",
+            cloudflare_access_jwks_url="https://team.cloudflareaccess.com/certs",
+            auth_users={"u@example.com": "missing"},
+            auth_profiles={"admin": "WIKIJS_API_KEY_ADMIN"},
+        )
+
+        with pytest.raises(ValueError, match="undefined profile"):
+            config.validate_multi_user_auth_config()
 
     def test_load_config_with_defaults(self):
         """Test that load_config uses defaults for missing env vars."""

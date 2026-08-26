@@ -1728,6 +1728,33 @@ class TestWikiJSMCPServer:
         assert "dummy-key" not in stdout
         assert "dummy-key" not in stderr
 
+    def test_http_multi_user_rejects_missing_cloudflare_assertion(self):
+        """Test multi-user HTTP mode fails closed before MCP initialization."""
+        port = get_free_port()
+        proc = start_http_server(
+            port,
+            extra_env={
+                "WIKIJS_CF_ACCESS_ISSUER": "https://team.cloudflareaccess.com",
+                "WIKIJS_CF_ACCESS_AUDIENCE": "audience-tag",
+                "WIKIJS_CF_ACCESS_JWKS_URL": "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
+                "WIKIJS_AUTH_USERS": "user@example.com=friends",
+                "WIKIJS_AUTH_PROFILES": "friends=WIKIJS_API_KEY_FRIENDS",
+                "WIKIJS_API_KEY_FRIENDS": "dummy-friends-key",
+            },
+        )
+
+        try:
+            response = wait_for_initialize_response(proc, port, host="127.0.0.1:8000")
+        finally:
+            stdout, stderr = stop_http_server(proc)
+
+        assert response.status_code == 401
+        assert "Cloudflare Access assertion" in response.text
+        assert "dummy-key" not in stdout
+        assert "dummy-key" not in stderr
+        assert "dummy-friends-key" not in stdout
+        assert "dummy-friends-key" not in stderr
+
     @patch("wikijs_mcp.server.WikiJSConfig.load_config")
     @patch("wikijs_mcp.config.WikiJSConfig.validate_config")
     async def test_run_stdio_validation_error(

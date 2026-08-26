@@ -160,6 +160,13 @@ def clean_env():
         "MCP_PATH",
         "MCP_ALLOWED_HOSTS",
         "MCP_ALLOWED_ORIGINS",
+        "WIKIJS_CF_ACCESS_ISSUER",
+        "WIKIJS_CF_ACCESS_AUDIENCE",
+        "WIKIJS_CF_ACCESS_JWKS_URL",
+        "WIKIJS_AUTH_USERS",
+        "WIKIJS_AUTH_PROFILES",
+        "WIKIJS_API_KEY_ADMIN",
+        "WIKIJS_API_KEY_FRIENDS",
         "DEBUG",
     ]
 

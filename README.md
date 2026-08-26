@@ -29,7 +29,7 @@ Wiki.js configuration:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WIKIJS_URL` | required | Base URL of your Wiki.js instance |
-| `WIKIJS_API_KEY` | required | Wiki.js API key. Kept server-side and never returned by tools |
+| `WIKIJS_API_KEY` | required for stdio/single-key mode | Legacy/default Wiki.js API key. Kept server-side and never returned by tools |
 | `WIKIJS_GRAPHQL_ENDPOINT` | `/graphql` | Wiki.js GraphQL endpoint path |
 | `WIKIJS_READ_ONLY` | `false` | When `true`, mutation tools are disabled |
 
@@ -42,6 +42,16 @@ Streamable HTTP configuration:
 | `MCP_PATH` | `/mcp` | MCP Streamable HTTP endpoint path |
 | `MCP_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*` | Comma-separated Host header allowlist |
 | `MCP_ALLOWED_ORIGINS` | `http://127.0.0.1:*,http://localhost:*` | Comma-separated Origin header allowlist |
+
+Cloudflare Access multi-user authorization, for remote Streamable HTTP deployments:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WIKIJS_CF_ACCESS_ISSUER` | unset | Cloudflare Access JWT issuer, usually `https://<team-name>.cloudflareaccess.com` |
+| `WIKIJS_CF_ACCESS_AUDIENCE` | unset | Cloudflare Access application audience tag |
+| `WIKIJS_CF_ACCESS_JWKS_URL` | unset | Cloudflare Access JWKS URL, usually `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/certs` |
+| `WIKIJS_AUTH_USERS` | unset | User email to credential profile mapping |
+| `WIKIJS_AUTH_PROFILES` | unset | Credential profile to Wiki.js API-key environment variable mapping |
 
 The server does not bind to `0.0.0.0` by default. For production, put HTTPS/authentication in front of the local HTTP listener.
 
@@ -95,6 +105,61 @@ MCP_ALLOWED_ORIGINS=http://127.0.0.1:*,http://localhost:*,https://mcp.example.co
 ```
 
 The MCP Python SDK enforces DNS rebinding protection for HTTP transports. Keep that protection enabled. Do not use `*`, disable DNS rebinding protection, or spoof the `Host` header in nginx merely to bypass validation.
+
+### Cloudflare Access multi-user mode
+
+By default, both stdio and Streamable HTTP use the single `WIKIJS_API_KEY`.
+
+For a remote MCP protected by Cloudflare Access, you can enable multi-user mode. The server validates the `Cf-Access-Jwt-Assertion` header, extracts the authenticated email, maps it to a credential profile, then uses the Wiki.js API key from that profile only for the current MCP request. It does not mutate the global config or reuse a client with a changed authorization header.
+
+Example:
+
+```text
+WIKIJS_URL=https://wiki.example.com
+WIKIJS_CF_ACCESS_ISSUER=https://example.cloudflareaccess.com
+WIKIJS_CF_ACCESS_AUDIENCE=0000000000000000000000000000000000000000000000000000000000000000
+WIKIJS_CF_ACCESS_JWKS_URL=https://example.cloudflareaccess.com/cdn-cgi/access/certs
+
+WIKIJS_AUTH_USERS=admin@example.com=admin,friend1@example.com=friends,friend2@example.com=friends
+WIKIJS_AUTH_PROFILES=admin=WIKIJS_API_KEY_ADMIN,friends=WIKIJS_API_KEY_FRIENDS
+
+WIKIJS_API_KEY_ADMIN=fake-admin-api-key
+WIKIJS_API_KEY_FRIENDS=fake-friends-api-key
+```
+
+JSON object syntax is also accepted for the mappings:
+
+```text
+WIKIJS_AUTH_USERS={"admin@example.com":"admin","friend@example.com":"friends"}
+WIKIJS_AUTH_PROFILES={"admin":"WIKIJS_API_KEY_ADMIN","friends":"WIKIJS_API_KEY_FRIENDS"}
+```
+
+Do not put Wiki.js API keys directly in `WIKIJS_AUTH_USERS` or `WIKIJS_AUTH_PROFILES`; profiles reference environment variable names only. Multiple users can share one profile, and the Wiki.js API key assigned to that profile should be associated with the corresponding Wiki.js group. Wiki.js remains the source of truth for page permissions and Page Rules.
+
+When multi-user mode is configured in Streamable HTTP mode:
+
+- Missing or invalid `Cf-Access-Jwt-Assertion` is rejected.
+- Expired assertions, wrong issuer, and wrong audience are rejected.
+- Authenticated users without a mapping are rejected.
+- Missing profile definitions or missing API-key environment variables are rejected.
+- The server does not fall back to `WIKIJS_API_KEY` for remote authenticated requests.
+
+In stdio, local use remains unchanged and uses `WIKIJS_API_KEY`.
+
+In Cloudflare, the Access application audience tag is visible in the Access application settings. The issuer and JWKS URL are based on your team domain:
+
+```text
+WIKIJS_CF_ACCESS_ISSUER=https://<team-name>.cloudflareaccess.com
+WIKIJS_CF_ACCESS_JWKS_URL=https://<team-name>.cloudflareaccess.com/cdn-cgi/access/certs
+```
+
+To add a new Wiki.js group/API key:
+
+1. Create or select the Wiki.js group and Page Rules in Wiki.js.
+2. Create a Wiki.js API key associated with that group.
+3. Store the key in a new environment variable, for example `WIKIJS_API_KEY_PARTNERS`.
+4. Add a profile entry, for example `partners=WIKIJS_API_KEY_PARTNERS`.
+5. Map one or more Cloudflare Access user emails to `partners`.
 
 ### Read-only mode
 
