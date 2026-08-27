@@ -11,6 +11,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp.server.fastmcp.exceptions import ToolError
+from starlette.testclient import TestClient
 
 from wikijs_mcp.auth import (
     AuthorizationError,
@@ -36,6 +37,25 @@ class FakeJWKClient:
 
     def get_signing_key_from_jwt(self, token):
         return SimpleNamespace(key=self.public_key)
+
+
+class FakeWikiJSClient:
+    """Capture request-scoped API keys used by real HTTP tool calls."""
+
+    seen_api_keys: list[str] = []
+
+    def __init__(self, config):
+        self.config = config
+        self.seen_api_keys.append(config.api_key)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+    async def list_pages(self, *args, **kwargs):
+        return []
 
 
 def make_token(
@@ -76,6 +96,49 @@ def make_config() -> WikiJSConfig:
             "admin": "WIKIJS_API_KEY_ADMIN",
             "friends": "WIKIJS_API_KEY_FRIENDS",
         },
+        mcp_allowed_hosts=["testserver"],
+    )
+
+
+def post_mcp(client: TestClient, assertion: str, request_id: int, method: str, params):
+    return client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        },
+        headers={
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "cf-access-jwt-assertion": assertion,
+            "mcp-protocol-version": "2025-06-18",
+        },
+    )
+
+
+def initialize(client: TestClient, assertion: str):
+    return post_mcp(
+        client,
+        assertion,
+        1,
+        "initialize",
+        {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "pytest", "version": "0.0.0"},
+        },
+    )
+
+
+def call_list_pages(client: TestClient, assertion: str, request_id: int = 2):
+    return post_mcp(
+        client,
+        assertion,
+        request_id,
+        "tools/call",
+        {"name": "wiki_list_pages", "arguments": {"limit": 5}},
     )
 
 
@@ -221,6 +284,26 @@ class TestCloudflareAccessAuth:
             server._request_config_for_request(request)
 
     @patch("wikijs_mcp.server.WikiJSConfig.load_config")
+    def test_missing_request_context_in_multi_user_fails_closed(
+        self, mock_load_config, mock_wiki_config
+    ):
+        config = mock_wiki_config.model_copy(
+            update={
+                "api_key": "legacy-admin-key",
+                "cloudflare_access_issuer": ISSUER,
+                "cloudflare_access_audience": AUDIENCE,
+                "cloudflare_access_jwks_url": f"{ISSUER}/cdn-cgi/access/certs",
+                "auth_users": {"a@example.com": "a"},
+                "auth_profiles": {"a": "KEY_A"},
+            }
+        )
+        mock_load_config.return_value = config
+        server = WikiJSMCPServer()
+
+        with pytest.raises(ToolError, match="Request context unavailable"):
+            server._request_config()
+
+    @patch("wikijs_mcp.server.WikiJSConfig.load_config")
     def test_request_config_uses_prevalidated_asgi_scope(
         self, mock_load_config, mock_wiki_config
     ):
@@ -265,3 +348,68 @@ class TestCloudflareAccessAuth:
 
         assert sent[0]["status"] == 401
         assert b"Cloudflare Access assertion" in sent[1]["body"]
+
+    @patch("wikijs_mcp.server.WikiJSConfig.load_config")
+    @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
+    def test_http_tool_call_uses_admin_request_scoped_key(self, mock_load_config):
+        config = make_config()
+        mock_load_config.return_value = config
+        FakeWikiJSClient.seen_api_keys = []
+        server = WikiJSMCPServer()
+        server.credential_resolver.resolve_for_assertion = lambda assertion: {
+            "token-admin": "admin-key"
+        }[assertion]
+
+        with TestClient(server.streamable_http_app()) as client:
+            assert initialize(client, "token-admin").status_code == 200
+            response = call_list_pages(client, "token-admin")
+
+        assert response.status_code == 200
+        assert FakeWikiJSClient.seen_api_keys == ["admin-key"]
+        assert server.config.api_key == "legacy-key"
+
+    @patch("wikijs_mcp.server.WikiJSConfig.load_config")
+    @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
+    def test_http_tool_call_uses_restricted_request_scoped_key(
+        self, mock_load_config
+    ):
+        config = make_config()
+        mock_load_config.return_value = config
+        FakeWikiJSClient.seen_api_keys = []
+        server = WikiJSMCPServer()
+        server.credential_resolver.resolve_for_assertion = lambda assertion: {
+            "token-restricted": "restricted-key"
+        }[assertion]
+
+        with TestClient(server.streamable_http_app()) as client:
+            assert initialize(client, "token-restricted").status_code == 200
+            response = call_list_pages(client, "token-restricted")
+
+        assert response.status_code == 200
+        assert FakeWikiJSClient.seen_api_keys == ["restricted-key"]
+        assert server.config.api_key == "legacy-key"
+
+    @patch("wikijs_mcp.server.WikiJSConfig.load_config")
+    @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
+    def test_http_concurrent_tool_calls_do_not_share_credentials(
+        self, mock_load_config
+    ):
+        config = make_config()
+        mock_load_config.return_value = config
+        FakeWikiJSClient.seen_api_keys = []
+        server = WikiJSMCPServer()
+        server.credential_resolver.resolve_for_assertion = lambda assertion: {
+            "token-admin": "admin-key",
+            "token-restricted": "restricted-key",
+        }[assertion]
+
+        with TestClient(server.streamable_http_app()) as client:
+            assert initialize(client, "token-admin").status_code == 200
+            assert call_list_pages(client, "token-admin", request_id=2).status_code == 200
+            assert (
+                call_list_pages(client, "token-restricted", request_id=3).status_code
+                == 200
+            )
+
+        assert FakeWikiJSClient.seen_api_keys == ["admin-key", "restricted-key"]
+        assert server.config.api_key == "legacy-key"

@@ -138,19 +138,19 @@ class WikiJSMCPServer:
         """Return a config with the API key resolved for the current request."""
         if not self.config.multi_user_auth_enabled:
             return self.config
-    
+
         try:
             request = self.app.get_context().request_context.request
         except ValueError as exc:
             raise ToolError(
                 "Request context unavailable while multi-user authentication is enabled."
             ) from exc
-    
+
         if request is None:
             raise ToolError(
                 "Request context unavailable while multi-user authentication is enabled."
             )
-    
+
         return self._request_config_for_request(request)
 
     def _request_config_for_request(self, request) -> WikiJSConfig:

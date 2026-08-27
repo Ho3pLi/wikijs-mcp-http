@@ -9,7 +9,6 @@ from typing import Any
 
 import jwt
 from jwt import PyJWKClient
-import hashlib
 
 from .config import WikiJSConfig
 
@@ -104,23 +103,6 @@ class WikiJSCredentialResolver:
                 f"Wiki.js API key environment variable for profile '{profile}' is not set."
             )
 
-        fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:12]
-
-        # logger.warning(
-        #     "Resolved Wiki.js credentials: email=%s profile=%s key_env=%s key_fingerprint=%s",
-        #     normalize_email(email),
-        #     profile,
-        #     api_key_env,
-        #     fingerprint,
-        # )
-        print(
-            f"AUTH DEBUG email={normalize_email(email)} "
-            f"profile={profile} "
-            f"key_env={api_key_env} "
-            f"fingerprint={fingerprint}",
-            flush=True,
-        )
-
         return api_key
 
     @staticmethod
@@ -128,7 +110,7 @@ class WikiJSCredentialResolver:
         value = claims.get("email")
         if isinstance(value, str) and value.strip():
             return value
-    
+
         raise AuthorizationError(
             "Cloudflare Access assertion does not contain an email identity."
         )
