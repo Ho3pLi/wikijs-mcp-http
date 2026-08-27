@@ -43,9 +43,8 @@ class CloudflareAccessMiddleware:
 
         assertion = self._header(scope, "cf-access-jwt-assertion")
         try:
-            scope["wikijs_api_key"] = self.credential_resolver.resolve_for_assertion(
-                assertion
-            )
+            api_key = self.credential_resolver.resolve_for_assertion(assertion)
+            scope["wikijs_api_key"] = api_key
         except AuthorizationError as exc:
             await self._reject(send, str(exc))
             return

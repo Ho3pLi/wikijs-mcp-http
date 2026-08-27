@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+import threading
+import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import jwt
 import pytest
+import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp.server.fastmcp.exceptions import ToolError
 from starlette.testclient import TestClient
@@ -43,6 +49,9 @@ class FakeWikiJSClient:
     """Capture request-scoped API keys used by real HTTP tool calls."""
 
     seen_api_keys: list[str] = []
+    started_count: int = 0
+    gate_started: threading.Event | None = None
+    gate_release: threading.Event | None = None
 
     def __init__(self, config):
         self.config = config
@@ -55,6 +64,11 @@ class FakeWikiJSClient:
         return None
 
     async def list_pages(self, *args, **kwargs):
+        if self.gate_started is not None and self.gate_release is not None:
+            type(self).started_count += 1
+            if type(self).started_count >= 2:
+                self.gate_started.set()
+            await asyncio.to_thread(self.gate_release.wait)
         return []
 
 
@@ -96,7 +110,7 @@ def make_config() -> WikiJSConfig:
             "admin": "WIKIJS_API_KEY_ADMIN",
             "friends": "WIKIJS_API_KEY_FRIENDS",
         },
-        mcp_allowed_hosts=["testserver"],
+        mcp_allowed_hosts=["testserver", "127.0.0.1:*"],
     )
 
 
@@ -397,19 +411,100 @@ class TestCloudflareAccessAuth:
         config = make_config()
         mock_load_config.return_value = config
         FakeWikiJSClient.seen_api_keys = []
+        FakeWikiJSClient.started_count = 0
+        FakeWikiJSClient.gate_started = threading.Event()
+        FakeWikiJSClient.gate_release = threading.Event()
         server = WikiJSMCPServer()
         server.credential_resolver.resolve_for_assertion = lambda assertion: {
             "token-admin": "admin-key",
             "token-restricted": "restricted-key",
         }[assertion]
 
-        with TestClient(server.streamable_http_app()) as client:
-            assert initialize(client, "token-admin").status_code == 200
-            assert call_list_pages(client, "token-admin", request_id=2).status_code == 200
-            assert (
-                call_list_pages(client, "token-restricted", request_id=3).status_code
-                == 200
-            )
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
 
-        assert FakeWikiJSClient.seen_api_keys == ["admin-key", "restricted-key"]
+        uvicorn_server = uvicorn.Server(
+            uvicorn.Config(
+                server.streamable_http_app(),
+                host="127.0.0.1",
+                port=port,
+                log_level="warning",
+            )
+        )
+
+        thread = threading.Thread(target=uvicorn_server.run, daemon=True)
+        thread.start()
+        for _ in range(100):
+            if uvicorn_server.started:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("uvicorn server did not start")
+
+        async def flow(assertion: str, request_id: int) -> tuple[int, str]:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+                headers = {
+                    "accept": "application/json, text/event-stream",
+                    "content-type": "application/json",
+                    "cf-access-jwt-assertion": assertion,
+                    "mcp-protocol-version": "2025-06-18",
+                }
+
+                init_response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "clientInfo": {"name": "pytest", "version": "0.0.0"},
+                        },
+                    },
+                    headers=headers,
+                )
+                assert init_response.status_code == 200
+
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": request_id + 100,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "wiki_list_pages",
+                            "arguments": {"limit": 5},
+                        },
+                    },
+                    headers=headers,
+                )
+                return response.status_code, response.text
+
+        async def run_flows() -> tuple[tuple[int, str], tuple[int, str]]:
+            admin_task = asyncio.create_task(flow("token-admin", 1))
+            restricted_task = asyncio.create_task(flow("token-restricted", 2))
+
+            assert await asyncio.to_thread(FakeWikiJSClient.gate_started.wait, 5)
+            FakeWikiJSClient.gate_release.set()
+
+            admin_result = await admin_task
+            restricted_result = await restricted_task
+            return admin_result, restricted_result
+
+        try:
+            (admin_status, admin_body), (restricted_status, restricted_body) = asyncio.run(
+                run_flows()
+            )
+        finally:
+            uvicorn_server.should_exit = True
+            thread.join(timeout=10)
+
+        assert admin_status == 200
+        assert restricted_status == 200
+        assert Counter(FakeWikiJSClient.seen_api_keys) == Counter(
+            ["admin-key", "restricted-key"]
+        )
         assert server.config.api_key == "legacy-key"
