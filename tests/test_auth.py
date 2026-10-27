@@ -63,6 +63,22 @@ class FakeWikiJSClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         return None
 
+    created_pages: list[dict] = []
+
+    async def get_localization_config(self):
+        return {"locale": "zh", "namespacing": False, "namespaces": ["zh"]}
+
+    async def create_page(self, **kwargs):
+        self.created_pages.append(kwargs)
+        return {"page": {"id": 42, "title": kwargs["title"], "path": kwargs["path"]}}
+
+    async def get_site_info(self):
+        return {
+            "title": "Test Wiki",
+            "host": "https://wiki.example.com",
+            "localization": await self.get_localization_config(),
+        }
+
     async def list_pages(self, *args, **kwargs):
         if self.gate_started is not None and self.gate_release is not None:
             type(self).started_count += 1
@@ -225,9 +241,7 @@ class TestCloudflareAccessAuth:
             (ISSUER, "wrong-audience"),
         ],
     )
-    def test_wrong_audience_or_issuer_is_rejected(
-        self, rsa_keys, issuer, audience
-    ):
+    def test_wrong_audience_or_issuer_is_rejected(self, rsa_keys, issuer, audience):
         private_key, public_key = rsa_keys
         resolver = make_resolver(make_config(), public_key)
         token = make_token(private_key, issuer=issuer, audience=audience)
@@ -332,8 +346,10 @@ class TestCloudflareAccessAuth:
         )
         mock_load_config.return_value = config
         server = WikiJSMCPServer()
-        server.credential_resolver.resolve_for_assertion = lambda assertion: pytest.fail(
-            "resolver should not run when middleware already validated the request"
+        server.credential_resolver.resolve_for_assertion = lambda assertion: (
+            pytest.fail(
+                "resolver should not run when middleware already validated the request"
+            )
         )
         request = SimpleNamespace(headers={}, scope={"wikijs_api_key": "scoped-key"})
 
@@ -363,6 +379,61 @@ class TestCloudflareAccessAuth:
         assert sent[0]["status"] == 401
         assert b"Cloudflare Access assertion" in sent[1]["body"]
 
+    @pytest.mark.parametrize(
+        ("tool", "arguments", "expected_text"),
+        [
+            (
+                "wiki_create_page",
+                {"path": "new-page", "title": "New page", "content": "Body"},
+                "Successfully created page",
+            ),
+            ("wiki_get_site_info", {}, "Default Locale:** zh"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("assertion", "api_key"),
+        [("token-admin", "admin-key"), ("token-restricted", "restricted-key")],
+    )
+    @patch("wikijs_mcp.server.WikiJSConfig.load_config")
+    @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
+    def test_localized_http_tools_preserve_request_credentials(
+        self, mock_load_config, tool, arguments, expected_text, assertion, api_key
+    ):
+        """Upstream locale support must not replace the caller's Wiki.js key."""
+        mock_load_config.return_value = make_config()
+        FakeWikiJSClient.seen_api_keys = []
+        FakeWikiJSClient.created_pages = []
+        server = WikiJSMCPServer()
+        server.credential_resolver.resolve_for_assertion = lambda value: {
+            assertion: api_key
+        }[value]
+
+        with TestClient(server.streamable_http_app()) as client:
+            assert initialize(client, assertion).status_code == 200
+            response = post_mcp(
+                client,
+                assertion,
+                2,
+                "tools/call",
+                {"name": tool, "arguments": arguments},
+            )
+
+        assert response.status_code == 200
+        assert not response.json()["result"].get("isError", False)
+        assert expected_text in response.text
+        assert FakeWikiJSClient.seen_api_keys == [api_key]
+        assert server.config.api_key == "legacy-key"
+        if tool == "wiki_create_page":
+            assert FakeWikiJSClient.created_pages == [
+                {
+                    **arguments,
+                    "description": "",
+                    "tags": [],
+                    "editor": "markdown",
+                    "locale": "zh",
+                }
+            ]
+
     @patch("wikijs_mcp.server.WikiJSConfig.load_config")
     @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
     def test_http_tool_call_uses_admin_request_scoped_key(self, mock_load_config):
@@ -384,9 +455,7 @@ class TestCloudflareAccessAuth:
 
     @patch("wikijs_mcp.server.WikiJSConfig.load_config")
     @patch("wikijs_mcp.server.WikiJSClient", FakeWikiJSClient)
-    def test_http_tool_call_uses_restricted_request_scoped_key(
-        self, mock_load_config
-    ):
+    def test_http_tool_call_uses_restricted_request_scoped_key(self, mock_load_config):
         config = make_config()
         mock_load_config.return_value = config
         FakeWikiJSClient.seen_api_keys = []
@@ -495,8 +564,8 @@ class TestCloudflareAccessAuth:
             return admin_result, restricted_result
 
         try:
-            (admin_status, admin_body), (restricted_status, restricted_body) = asyncio.run(
-                run_flows()
+            (admin_status, admin_body), (restricted_status, restricted_body) = (
+                asyncio.run(run_flows())
             )
         finally:
             uvicorn_server.should_exit = True

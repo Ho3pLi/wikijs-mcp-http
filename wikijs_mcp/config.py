@@ -70,7 +70,9 @@ class WikiJSConfig(BaseModel):
     mcp_host: str = Field(default="127.0.0.1")
     mcp_port: int = Field(default=8000)
     mcp_path: str = Field(default="/mcp")
-    mcp_allowed_hosts: list[str] = Field(default_factory=lambda: list(DEFAULT_MCP_ALLOWED_HOSTS))
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_MCP_ALLOWED_HOSTS)
+    )
     mcp_allowed_origins: list[str] = Field(
         default_factory=lambda: list(DEFAULT_MCP_ALLOWED_ORIGINS)
     )
@@ -157,7 +159,9 @@ class WikiJSConfig(BaseModel):
                 "Multi-user Cloudflare Access mode requires: " + ", ".join(missing)
             )
 
-        undefined_profiles = sorted(set(self.auth_users.values()) - set(self.auth_profiles))
+        undefined_profiles = sorted(
+            set(self.auth_users.values()) - set(self.auth_profiles)
+        )
         if undefined_profiles:
             raise ValueError(
                 "WIKIJS_AUTH_USERS references undefined profile(s): "

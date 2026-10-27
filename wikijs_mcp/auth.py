@@ -95,7 +95,9 @@ class WikiJSCredentialResolver:
 
         api_key_env = self.config.auth_profiles.get(profile)
         if api_key_env is None:
-            raise AuthorizationError("Configured Wiki.js credential profile does not exist.")
+            raise AuthorizationError(
+                "Configured Wiki.js credential profile does not exist."
+            )
 
         api_key = os.getenv(api_key_env)
         if not api_key:
